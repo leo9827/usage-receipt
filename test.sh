@@ -579,6 +579,8 @@ test_setup_installs_into_temp_home() {
     fail "usage-receipt symlink should point at repo wrapper"
   [[ -x "${CLI}" ]] || fail "repo wrapper should be executable"
   [[ -x "${ROOT_DIR}/session-end-hook.sh" ]] || fail "hook script should be executable"
+  PYTHONDONTWRITEBYTECODE=1 "${bin_dir}/usage-receipt" --help >/dev/null ||
+    fail "installed usage-receipt command should run through symlink"
 
   HOME_FOR_CHECK="${home}" REPO_FOR_CHECK="${ROOT_DIR}" python3 - <<'PY'
 import json

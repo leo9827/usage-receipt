@@ -98,7 +98,7 @@ Then add `~/.codex/hooks.json`:
 }
 ```
 
-Claude Code and Codex both pass hook input as JSON on stdin. The hook script reads the session id, asks `usage-receipt` to render that local session, and writes the output to the terminal.
+Claude Code and Codex both pass hook input as JSON on stdin. The hook script reads the transcript path when available, falls back to the session id, asks `usage-receipt` to render that local session, and writes the output to the terminal.
 
 ## For Agents
 

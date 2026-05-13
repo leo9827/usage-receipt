@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-exec python3 "${SCRIPT_DIR}/usage_receipt.py" "$@"
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SOURCE}" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+  SOURCE="$(readlink "${SOURCE}")"
+  [[ "${SOURCE}" == /* ]] || SOURCE="${SOURCE_DIR}/${SOURCE}"
+done
+
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+exec "${PYTHON_BIN}" "${SCRIPT_DIR}/usage_receipt.py" "$@"

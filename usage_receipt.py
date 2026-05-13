@@ -334,7 +334,9 @@ def load_codex_session(path: str | Path) -> dict[str, Any]:
     total_cached = _int(total.get("cached_input_tokens")) or 0
     last_input = _int(last.get("input_tokens"))
     last_cached = _int(last.get("cached_input_tokens"))
-    rate_limits = payload.get("rate_limits", {})
+    rate_limits = payload.get("rate_limits")
+    if not isinstance(rate_limits, dict):
+        rate_limits = {}
     primary = rate_limits.get("primary", {})
     secondary = rate_limits.get("secondary", {})
     timestamp = str(token_event.get("timestamp") or "")

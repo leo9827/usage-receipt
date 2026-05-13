@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 from pathlib import Path
 
@@ -15,16 +14,14 @@ PATH_BLOCK_END = "# <<< usage-receipt setup <<<"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Install usage-receipt command and agent hooks.")
+    parser = argparse.ArgumentParser(description="Install usage-receipt command and Claude hook.")
     parser.add_argument("--repo-dir", default=str(Path(__file__).resolve().parents[1]), help=argparse.SUPPRESS)
     parser.add_argument("--bin-dir", help="Directory where the usage-receipt command symlink is created.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing files.")
     parser.add_argument("--force", action="store_true", help="Replace an existing usage-receipt command symlink/file.")
     parser.add_argument("--skip-command", action="store_true", help="Do not create the global usage-receipt command.")
     parser.add_argument("--skip-claude", action="store_true", help="Do not install the Claude Code hook.")
-    parser.add_argument("--skip-codex", action="store_true", help="Do not install the Codex hook.")
     parser.add_argument("--claude-event", default="SessionEnd", help="Claude Code hook event to install.")
-    parser.add_argument("--codex-event", default="SessionEnd", help="Codex hook event to install.")
     parser.add_argument("--no-path-update", action="store_true", help="Do not edit shell rc files when bin dir is not on PATH.")
     return parser.parse_args(argv)
 
@@ -37,9 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         bin_dir=Path(args.bin_dir).expanduser() if args.bin_dir else default_bin_dir(),
         install_command=not args.skip_command,
         install_claude=not args.skip_claude,
-        install_codex=not args.skip_codex,
         claude_event=args.claude_event,
-        codex_event=args.codex_event,
         update_path=not args.no_path_update,
     )
     return 0
@@ -64,9 +59,7 @@ class Installer:
         bin_dir: Path,
         install_command: bool,
         install_claude: bool,
-        install_codex: bool,
         claude_event: str,
-        codex_event: str,
         update_path: bool,
     ) -> None:
         self.require_repo_file(self.cli_path)
@@ -79,8 +72,6 @@ class Installer:
             self.ensure_bin_dir_on_path(bin_dir, update_path)
         if install_claude:
             self.install_claude_hook(claude_event)
-        if install_codex:
-            self.install_codex_hook(codex_event)
 
         self.say("usage-receipt setup complete.")
 
@@ -112,27 +103,6 @@ class Installer:
             self.say(f"Claude {event} hook installed: {settings_path}")
         else:
             self.say(f"Claude {event} hook already installed: {settings_path}")
-
-    def install_codex_hook(self, event: str) -> None:
-        codex_dir = Path.home() / ".codex"
-        config_path = codex_dir / "config.toml"
-        hooks_path = codex_dir / "hooks.json"
-
-        config_text = read_text_if_exists(config_path)
-        updated_config = enable_codex_hooks(config_text)
-        if updated_config != config_text:
-            self.write_text(config_path, updated_config)
-            self.say(f"Codex hook feature enabled: {config_path}")
-        else:
-            self.say(f"Codex hook feature already enabled: {config_path}")
-
-        hooks = self.load_json_object(hooks_path)
-        changed = add_event_hook(hooks, event, hook_command(self.hook_path, "codex"))
-        if changed:
-            self.write_json(hooks_path, hooks)
-            self.say(f"Codex {event} hook installed: {hooks_path}")
-        else:
-            self.say(f"Codex {event} hook already installed: {hooks_path}")
 
     def ensure_bin_dir_on_path(self, bin_dir: Path, update_path: bool) -> None:
         if path_contains(bin_dir):
@@ -248,43 +218,6 @@ def add_event_hook(settings: dict, event: str, command: str) -> bool:
         }
     )
     return True
-
-
-def enable_codex_hooks(config_text: str) -> str:
-    if not config_text.strip():
-        return "[features]\ncodex_hooks = true\n"
-
-    lines = config_text.splitlines()
-    features_start = find_table(lines, "features")
-    if features_start is None:
-        return config_text.rstrip() + "\n\n[features]\ncodex_hooks = true\n"
-
-    features_end = find_next_table(lines, features_start + 1)
-    for index in range(features_start + 1, features_end):
-        if re.match(r"\s*codex_hooks\s*=", lines[index]):
-            if re.match(r"\s*codex_hooks\s*=\s*true\s*(#.*)?$", lines[index]):
-                return config_text if config_text.endswith("\n") else config_text + "\n"
-            lines[index] = "codex_hooks = true"
-            return "\n".join(lines) + "\n"
-
-    lines.insert(features_start + 1, "codex_hooks = true")
-    return "\n".join(lines) + "\n"
-
-
-def find_table(lines: list[str], table_name: str) -> int | None:
-    wanted = f"[{table_name}]"
-    for index, line in enumerate(lines):
-        if line.strip() == wanted:
-            return index
-    return None
-
-
-def find_next_table(lines: list[str], start: int) -> int:
-    for index in range(start, len(lines)):
-        stripped = lines[index].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            return index
-    return len(lines)
 
 
 def default_bin_dir() -> Path:

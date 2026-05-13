@@ -35,7 +35,7 @@ else
 fi
 
 if [ -n "$OUTPUT" ]; then
-    echo "" > /dev/tty 2>/dev/null || true
-    echo "$OUTPUT" > /dev/tty 2>/dev/null || true
-    echo "" > /dev/tty 2>/dev/null || true
+    if ! { printf '\n%s\n\n' "$OUTPUT" > /dev/tty; } 2>/dev/null; then
+        printf '\n%s\n\n' "$OUTPUT"
+    fi
 fi

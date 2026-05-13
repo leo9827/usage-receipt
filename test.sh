@@ -47,6 +47,16 @@ write_sonnet_payload() {
 EOF
 }
 
+write_codex_session_jsonl() {
+  local path="$1"
+  mkdir -p "$(dirname "${path}")"
+  cat >"${path}" <<'EOF'
+{"timestamp":"2026-05-13T03:00:00Z","type":"session_meta","payload":{"id":"019ehook","timestamp":"2026-05-13T03:00:00Z","cwd":"/Users/lihong98/dotfiles"}}
+{"timestamp":"2026-05-13T03:00:01Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/Users/lihong98/dotfiles","model":"gpt-5.5"}}
+{"timestamp":"2026-05-13T03:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":200,"reasoning_output_tokens":50,"total_tokens":1200},"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":120},"model_context_window":258400},"rate_limits":null}}
+EOF
+}
+
 run_python_unit_tests() {
   local test_file="${TEST_ROOT}/test_usage_receipt_unit.py"
   cat >"${test_file}" <<'PY'
@@ -69,7 +79,12 @@ class UsageReceiptUnitTests(unittest.TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    def write_codex_session(self, session_file, session_id="019eaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee"):
+    def write_codex_session(self, session_file, session_id="019eaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee", rate_limits="default"):
+        if rate_limits == "default":
+            rate_limits = {
+                "primary": {"used_percent": 25.0, "window_minutes": 300},
+                "secondary": {"used_percent": 40.0, "window_minutes": 10080},
+            }
         session_file.parent.mkdir(parents=True, exist_ok=True)
         session_file.write_text(
             "\n".join(
@@ -119,10 +134,7 @@ class UsageReceiptUnitTests(unittest.TestCase):
                                     },
                                     "model_context_window": 258400,
                                 },
-                                "rate_limits": {
-                                    "primary": {"used_percent": 25.0, "window_minutes": 300},
-                                    "secondary": {"used_percent": 40.0, "window_minutes": 10080},
-                                },
+                                "rate_limits": rate_limits,
                             },
                         }
                     ),
@@ -416,6 +428,17 @@ class UsageReceiptUnitTests(unittest.TestCase):
         self.assertIn("5H LIMIT", output)
         self.assertIn("WEEKLY LIMIT", output)
 
+    def test_codex_session_allows_null_rate_limits(self):
+        session_file = self.tmp / "codex" / "rollout-null-rate-limits.jsonl"
+        self.write_codex_session(session_file, rate_limits=None)
+
+        output = usage_receipt.run(["codex", "--file", str(session_file), "--ascii"])
+
+        self.assertIn("PROVIDER : OpenAI / codex", output)
+        self.assertIn("Reasoning out", output)
+        self.assertNotIn("5H LIMIT", output)
+        self.assertNotIn("WEEKLY LIMIT", output)
+
     def test_codex_session_can_be_selected_by_session_id_prefix(self):
         session_file = self.tmp / "codex" / "2026" / "05" / "13" / "rollout-session.jsonl"
         self.write_codex_session(session_file)
@@ -601,24 +624,11 @@ claude_commands = [
 ]
 if f"'{hook}' claude" not in claude_commands:
     sys.exit("Claude SessionEnd hook was not installed")
-
-codex_config = (home / ".codex" / "config.toml").read_text()
-if "[features]" not in codex_config or "codex_hooks = true" not in codex_config:
-    sys.exit("Codex hooks feature flag was not enabled")
-
-codex_hooks = json.loads((home / ".codex" / "hooks.json").read_text())
-codex_commands = [
-    hook_entry["command"]
-    for group in codex_hooks["hooks"]["SessionEnd"]
-    for hook_entry in group.get("hooks", [])
-]
-if f"'{hook}' codex" not in codex_commands:
-    sys.exit("Codex SessionEnd hook was not installed")
 PY
   if [[ $? -eq 0 ]]; then
-    pass "setup installs command and hooks into temp home"
+    pass "setup installs command and Claude hook into temp home"
   else
-    fail "setup should install command and hooks into temp home"
+    fail "setup should install command and Claude hook into temp home"
   fi
 }
 
@@ -665,12 +675,92 @@ test_no_input_reads_latest_claude_state() {
   pass "command without stdin/file reads latest Claude state"
 }
 
+test_codex_wrapper_prints_receipt_after_exit() {
+  local fake_bin="${TEST_ROOT}/fake-bin"
+  local codex_log="${TEST_ROOT}/codex.log"
+  local output
+  local status
+
+  mkdir -p "${fake_bin}"
+  cat >"${fake_bin}/codex" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${CODEX_LOG}"
+printf 'FAKE-CODEX:%s\n' "$*"
+exit 23
+EOF
+  chmod +x "${fake_bin}/codex"
+
+  set +e
+  output="$(
+    CODEX_LOG="${codex_log}" PATH="${fake_bin}:${PATH}" zsh -f -c '
+      codex_should_skip_receipt() {
+        local first_arg="${1:-}"
+
+        case "$first_arg" in
+          -h|--help|--version|help|completion|login|logout|features|update|mcp|mcp-server|app-server|remote-control|app)
+            return 0
+            ;;
+        esac
+
+        return 1
+      }
+
+      codex() {
+        if codex_should_skip_receipt "${1:-}"; then
+          command codex "$@"
+          return $?
+        fi
+
+        local exit_status=0
+        command codex "$@"
+        exit_status=$?
+
+        usage-receipt codex --ascii || true
+
+        return $exit_status
+      }
+
+      usage-receipt() { printf "RECEIPT:%s\n" "$*"; }
+      codex
+    '
+  )"
+  status=$?
+  set -e
+
+  if [[ "${status}" -ne 23 ]]; then
+    fail "codex wrapper should preserve the command exit status"
+    return
+  fi
+
+  if [[ "${output}" == *"FAKE-CODEX:"*"RECEIPT:codex --ascii"* ]]; then
+    pass "codex wrapper prints receipt after the command exits"
+  else
+    fail "codex wrapper should print receipt after command output"
+  fi
+}
+
+test_hook_outputs_to_stdout_without_tty() {
+  local session="${TEST_ROOT}/codex-session.jsonl"
+  local output
+  write_codex_session_jsonl "${session}"
+
+  output="$(printf '{"transcript_path":"%s"}' "${session}" | "${ROOT_DIR}/session-end-hook.sh" codex)"
+
+  if [[ "${output}" == *"LLM TOKEN MART"* && "${output}" == *"OpenAI / codex"* ]]; then
+    pass "hook prints receipt without tty"
+  else
+    fail "hook should print receipt to stdout when tty output is unavailable"
+  fi
+}
+
 echo "=== usage receipt tests ==="
 
 run_python_unit_tests
 test_setup_installs_into_temp_home
 test_ascii_receipt_renders_costs
 test_no_input_reads_latest_claude_state
+test_codex_wrapper_prints_receipt_after_exit
+test_hook_outputs_to_stdout_without_tty
 
 if (( FAILURES > 0 )); then
   echo "Tests failed: ${FAILURES}"

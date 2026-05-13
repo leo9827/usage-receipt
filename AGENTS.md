@@ -14,14 +14,13 @@ The setup script:
 
 - creates a `usage-receipt` symlink in `~/.local/bin`;
 - installs a Claude Code `SessionEnd` hook in `~/.claude/settings.json`;
-- enables Codex hooks and installs a Codex `SessionEnd` hook in `~/.codex/config.toml` and `~/.codex/hooks.json`.
+- leaves Codex exit receipts to the shell wrapper in this dotfiles repo.
 
-Use `./setup.sh --dry-run` to inspect changes before writing. Use `./setup.sh --force` only when replacing an existing `usage-receipt` command is intended. This tool is designed as a session receipt, so the default hook event is `SessionEnd`.
+Use `./setup.sh --dry-run` to inspect changes before writing. Use `./setup.sh --force` only when replacing an existing `usage-receipt` command is intended. This tool installs the receipt command and the Claude Code hook; Codex receipts are handled by the shell wrapper in the dotfiles repo.
 
 After install, verify with:
 
 ```bash
 usage-receipt --help
 usage-receipt claude --list
-usage-receipt codex --list
 ```
